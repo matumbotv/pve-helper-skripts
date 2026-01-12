@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
-
 # ==========================================================
 # Proxmox LXC Installer - ClawdBot
-# Compatible with tteck / community-scripts style
+# Compatible with tteck / community-scripts
 # ==========================================================
 
-set -e
+set -euo pipefail
 
 APP="ClawdBot"
-CTID=""
 HOSTNAME="clawdbot"
 TEMPLATE="ubuntu-22.04-standard_22.04-1_amd64.tar.zst"
 STORAGE="local-lvm"
@@ -19,27 +17,27 @@ CORES="2"
 BRIDGE="vmbr0"
 IP="dhcp"
 
-# ---------- Helper Functions ----------
+# ---------- Helper ----------
 msg_info() { echo -e "\e[34m[INFO]\e[0m $1"; }
 msg_ok()   { echo -e "\e[32m[OK]\e[0m $1"; }
 msg_err()  { echo -e "\e[31m[ERROR]\e[0m $1"; exit 1; }
 
 # ---------- Root Check ----------
 if [[ "$EUID" -ne 0 ]]; then
-  msg_err "Dieses Skript muss als root ausgeführt werden!"
+  msg_err "Bitte als root auf dem Proxmox Host ausführen!"
 fi
 
-# ---------- Get Next CTID ----------
+# ---------- CTID ----------
 CTID=$(pvesh get /cluster/nextid)
 msg_info "Verwende CTID: $CTID"
 
-# ---------- Download Template ----------
-msg_info "Prüfe LXC Template..."
+# ---------- Template ----------
+msg_info "Aktualisiere Template-Liste"
 pveam update
 pveam download local "$TEMPLATE"
 
 # ---------- Create Container ----------
-msg_info "Erstelle LXC Container für $APP..."
+msg_info "Erstelle LXC Container für $APP"
 
 pct create "$CTID" "local:vztmpl/$TEMPLATE" \
   --hostname "$HOSTNAME" \
@@ -55,33 +53,39 @@ pct create "$CTID" "local:vztmpl/$TEMPLATE" \
 
 msg_ok "Container erstellt"
 
-# ---------- Start Container ----------
-msg_info "Starte Container..."
+# ---------- Start ----------
+msg_info "Starte Container"
 pct start "$CTID"
-sleep 5
+sleep 6
 
-# ---------- Install Dependencies ----------
-msg_info "Installiere Abhängigkeiten..."
+# ---------- Base Setup ----------
+msg_info "Installiere Basis-Pakete & Locale"
 
 pct exec "$CTID" -- bash -c "
+set -e
 apt update && apt upgrade -y
-apt install -y curl git nano build-essential
+apt install -y curl git nano build-essential locales ca-certificates gnupg
+
+locale-gen en_US.UTF-8
+update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 "
 
-msg_ok "System vorbereitet"
+msg_ok "Basis-System vorbereitet"
 
-# ---------- Install Node.js 20 ----------
-msg_info "Installiere Node.js 20..."
+# ---------- Node.js 22 ----------
+msg_info "Installiere Node.js 22 LTS"
 
 pct exec "$CTID" -- bash -c "
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 apt install -y nodejs
+node -v
+npm -v
 "
 
-msg_ok "Node.js installiert"
+msg_ok "Node.js 22 installiert"
 
-# ---------- Install ClawdBot ----------
-msg_info "Installiere ClawdBot..."
+# ---------- ClawdBot ----------
+msg_info "Installiere ClawdBot"
 
 pct exec "$CTID" -- bash -c "
 cd /opt
@@ -92,8 +96,8 @@ npm install
 
 msg_ok "ClawdBot installiert"
 
-# ---------- Install PM2 ----------
-msg_info "Installiere PM2..."
+# ---------- PM2 ----------
+msg_info "Installiere & konfiguriere PM2"
 
 pct exec "$CTID" -- bash -c "
 npm install -g pm2
@@ -102,20 +106,23 @@ pm2 save
 pm2 startup systemd -u root --hp /root
 "
 
-msg_ok "PM2 eingerichtet"
+msg_ok "PM2 aktiv"
 
-# ---------- Final Info ----------
+# ---------- Final ----------
 echo ""
-msg_ok "ClawdBot LXC Installation abgeschlossen!"
+msg_ok "ClawdBot LXC erfolgreich installiert"
 echo "--------------------------------------------------"
 echo "CTID:        $CTID"
 echo "Hostname:    $HOSTNAME"
 echo "Pfad:        /opt/clawdbot"
 echo ""
-echo "⚠️ WICHTIG:"
-echo "1. Bearbeite die Konfiguration:"
+echo "NÄCHSTE SCHRITTE:"
+echo "1) Konfiguration bearbeiten:"
 echo "   pct exec $CTID -- nano /opt/clawdbot/.env"
 echo ""
-echo "2. Danach Neustart:"
+echo "2) Bot neu starten:"
 echo "   pct exec $CTID -- pm2 restart clawdbot"
+echo ""
+echo "3) Logs ansehen:"
+echo "   pct exec $CTID -- pm2 logs clawdbot"
 echo "--------------------------------------------------"
